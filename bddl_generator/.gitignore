@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment variables
+.env
+
+# Generated files
+attempts/*
+output_bddl/*
+input_bddl/*
+
+# Keep empty folders in GitHub
+!attempts/.gitkeep
+!output_bddl/.gitkeep
+!input_bddl/.gitkeep
+
+# Misc
+*.log
+.DS_Store

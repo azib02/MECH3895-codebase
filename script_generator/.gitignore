@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Secrets
+.env
+
+# Generated outputs
+generated_scripts/*
+input_bddl/*
+reference_scripts/*
+
+# Keep folders
+!generated_scripts/.gitkeep
+!input_bddl/.gitkeep
+!reference_scripts/.gitkeep
+
+# Misc
+*.log
+.DS_Store

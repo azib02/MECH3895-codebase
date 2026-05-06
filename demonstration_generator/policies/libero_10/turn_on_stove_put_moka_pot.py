@@ -1,0 +1,202 @@
+import numpy as np
+from robosuite.utils.transform_utils import (
+    mat2quat,
+    quat_conjugate,
+    quat_multiply,
+    quat2axisangle,
+)
+
+
+# ---------------------------------------------------------------------------
+# Smooth movement helpers
+# ---------------------------------------------------------------------------
+
+def nlerp(q1, q2, alpha):
+    """Normalised linear interpolation for smooth rotations."""
+    if np.dot(q1, q2) < 0:
+        q2 = -q2
+
+    q_interp = (1 - alpha) * q1 + alpha * q2
+    return q_interp / np.linalg.norm(q_interp)
+
+
+def get_matrix(env, name):
+    """Get the world-frame pose matrix of an object/body."""
+    pos = env.sim.data.get_body_xpos(name).copy()
+    mat = env.sim.data.get_body_xmat(name).reshape(3, 3).copy()
+
+    transform = np.eye(4)
+    transform[:3, :3] = mat
+    transform[:3, 3] = pos
+
+    return transform
+
+
+def move_to_smooth(env, target_matrix, offset=None, steps=100, grip=-1.0):
+    """
+    Smoothly move the end-effector to a target pose.
+
+    Args:
+        env: LIBERO/robosuite environment.
+        target_matrix: 4x4 world-frame target pose.
+        offset: Optional XYZ offset applied to target position.
+        steps: Number of movement steps.
+        grip: Gripper command. Usually -1.0 open, 1.0 closed.
+    """
+    if offset is None:
+        offset = [0, 0, 0]
+
+    target_pos_world = target_matrix[:3, 3] + np.array(offset)
+    target_quat = mat2quat(target_matrix[:3, :3])
+
+    robot_base_pos = np.array(env.robots[0].base_pos)
+
+    start_pos_world = env.robots[0]._hand_pos + robot_base_pos
+    start_quat = env.robots[0]._hand_quat.copy()
+
+    for step in range(1, steps + 1):
+        alpha = step / steps
+
+        interp_pos_world = start_pos_world + alpha * (
+            target_pos_world - start_pos_world
+        )
+        interp_quat = nlerp(start_quat, target_quat, alpha)
+
+        curr_pos_world = env.robots[0]._hand_pos + robot_base_pos
+        curr_quat = env.robots[0]._hand_quat
+
+        pos_error = interp_pos_world - curr_pos_world
+
+        if np.dot(curr_quat, interp_quat) < 0:
+            interp_quat = -interp_quat
+
+        rel_quat = quat_multiply(interp_quat, quat_conjugate(curr_quat))
+        rot_error = quat2axisangle(rel_quat)
+
+        action = np.zeros(7)
+        action[:3] = pos_error * 4.0
+        action[3:6] = rot_error * 2.0
+        action[6] = grip
+
+        env.step(action)
+
+        if getattr(env, "has_renderer", False):
+            env.render()
+
+
+def gripper_action(env, cmd, steps=40):
+    """Open or close the gripper for a fixed number of steps."""
+    action = np.zeros(7)
+    action[6] = cmd
+
+    for _ in range(steps):
+        env.step(action)
+
+        if getattr(env, "has_renderer", False):
+            env.render()
+
+
+def z_rotation_matrix(angle):
+    """Create a 4x4 Z-axis rotation matrix."""
+    c, s = np.cos(angle), np.sin(angle)
+
+    return np.array(
+        [
+            [c, -s, 0, 0],
+            [s, c, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
+# Captured body-to-body transforms
+# ---------------------------------------------------------------------------
+
+# Parent = flat_stove_1_button, Child = robot0_right_hand
+T_HAND_ON_KNOB = np.array(
+    [
+        [0.00850731, -0.99992955, -0.00827822, 0.00130077],
+        [-0.99773616, -0.00904035, 0.06663953, 0.00486789],
+        [-0.06670967, 0.00769255, -0.99774277, 0.12385825],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
+
+# Parent = moka_pot_1_main, Child = robot0_right_hand
+T_HAND_ON_MOKA = np.array(
+    [
+        [0.0468999, -0.99776395, -0.04761826, 0.00474117],
+        [-0.99887045, -0.04720934, 0.00539408, 0.07027523],
+        [-0.00763004, 0.04731149, -0.99885104, 0.12649014],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
+
+# Parent = flat_stove_1_burner, Child = moka_pot_1_main
+T_MOKA_ON_STOVE = np.array(
+    [
+        [-9.96476920e-01, 5.99797513e-02, 5.86189138e-02, -6.20754334e-04],
+        [-5.84217278e-02, -9.97900864e-01, 2.79422147e-02, 2.69366813e-03],
+        [6.01718318e-02, 2.44191538e-02, 9.97889300e-01, 9.37655605e-02],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+)
+
+
+# ---------------------------------------------------------------------------
+# Main policy
+# ---------------------------------------------------------------------------
+
+def run_solver(env, bddl_file=None):
+    """
+    Scripted policy for:
+    turn_on_the_stove_and_put_the_moka_pot_on_it
+
+    The environment is created by run_collection.py.
+    This function only controls the robot.
+    """
+    print("Phase 1: Turning stove knob...")
+
+    stove_grasp = get_matrix(env, "flat_stove_1_button") @ T_HAND_ON_KNOB
+
+    move_to_smooth(env, stove_grasp, offset=[0, 0, 0.08], steps=100, grip=-1.0)
+    move_to_smooth(env, stove_grasp, offset=[0, 0, 0.00], steps=100, grip=-1.0)
+
+    gripper_action(env, cmd=1.0, steps=40)
+
+    stove_twisted = stove_grasp @ z_rotation_matrix(-1.57)
+
+    move_to_smooth(env, stove_twisted, offset=[0, 0, 0.00], steps=100, grip=1.0)
+
+    gripper_action(env, cmd=-1.0, steps=40)
+
+    move_to_smooth(env, stove_twisted, offset=[0, 0, 0.10], steps=100, grip=-1.0)
+
+    print("Phase 2: Picking up moka pot...")
+
+    moka_grasp = get_matrix(env, "moka_pot_1_main") @ T_HAND_ON_MOKA
+
+    move_to_smooth(env, moka_grasp, offset=[0, 0, 0.15], steps=100, grip=-1.0)
+    move_to_smooth(env, moka_grasp, offset=[0, 0, 0.00], steps=100, grip=-1.0)
+
+    gripper_action(env, cmd=1.0, steps=40)
+
+    move_to_smooth(env, moka_grasp, offset=[0, 0, 0.15], steps=100, grip=1.0)
+
+    print("Phase 3: Placing moka pot on burner...")
+
+    moka_goal = get_matrix(env, "flat_stove_1_burner") @ T_MOKA_ON_STOVE
+    hand_goal = moka_goal @ T_HAND_ON_MOKA
+
+    move_to_smooth(env, hand_goal, offset=[0, 0, 0.10], steps=100, grip=1.0)
+    move_to_smooth(env, hand_goal, offset=[0, 0, 0.00], steps=100, grip=1.0)
+
+    gripper_action(env, cmd=-1.0, steps=40)
+
+    move_to_smooth(env, hand_goal, offset=[0, 0, 0.15], steps=100, grip=-1.0)
+
+    print("Mission complete.")
+
+    return True

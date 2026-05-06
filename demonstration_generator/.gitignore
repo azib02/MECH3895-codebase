@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+
+# Environment variables
+.env
+
+# Generated demonstration data
+raw_demos/*
+processed_demos/*
+tmp/*
+videos/*
+pruned_init/*
+input_bddl/*
+
+# Keep empty folders in GitHub
+!raw_demos/.gitkeep
+!processed_demos/.gitkeep
+!tmp/.gitkeep
+!videos/.gitkeep
+!pruned_init/.gitkeep
+!input_bddl/.gitkeep
+
+# Large dataset files
+*.hdf5
+*.h5
+*.mp4
+*.avi
+*.mov
+*.png
+*.jpg
+*.jpeg
+*.pruned_init
+
+# Logs and misc
+*.log
+.DS_Store
+Thumbs.db
