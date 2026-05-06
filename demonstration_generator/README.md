@@ -1,8 +1,6 @@
-## Main Pipeline
-The main scripts are:
 # Demonstration Generator
 
-This folder contains the scripts used to test scripted LIBERO policies, collect robot demonstrations, restructure the collected HDF5 files, inspect the generated data, and remove bad demonstrations.
+This folder contains the scripts used to test scripted LIBERO policies, collect robot demonstrations, restructure the collected HDF5 files, inspect the generated data, remove bad demonstrations, and manually capture relative transformation matrices for policy creation.
 
 It is part of the project:
 
@@ -25,12 +23,15 @@ demonstration_generator/
 │
 ├── policies/
 │   ├── __init__.py
-│   └── libero_10/
-│       ├── __init__.py
-│       └── turn_on_stove_put_moka_pot.py
+│   ├── libero_10/
+│   ├── libero_goal/
+│   ├── custom_object_vars/
+│   ├── libero_object/
+│   └── libero_spatial/
 │
 ├── tools/
 │   ├── __init__.py
+│   ├── capture_relative_transform.py
 │   ├── generate_pruned_init.py
 │   ├── check_raw.py
 │   ├── check_regenerated.py
@@ -55,6 +56,8 @@ The overall demonstration generation process is:
 ```text
 BDDL task file
    ↓
+manual transform capture, if needed
+   ↓
 scripted policy
    ↓
 raw HDF5 demonstrations
@@ -69,10 +72,16 @@ final dataset for training or conversion
 The main scripts are:
 
 ```text
-run_collection.py          Collects successful robot demonstrations
-restructure_dataset.py     Converts raw HDF5 files into trainer-ready HDF5 format
-tools/                     Contains testing, checking, frame extraction, and cleanup tools
-policies/                  Contains scripted robot policies
+run_collection.py                          Collects successful robot demonstrations
+restructure_dataset.py                     Converts raw HDF5 files into trainer-ready HDF5 format
+tools/capture_relative_transform.py        Manually captures grasp/place relative transforms
+tools/test_and_record_policy.py            Tests a policy visually and records a rollout video
+tools/check_raw.py                         Creates videos from raw HDF5 demonstrations
+tools/check_regenerated.py                 Creates videos from processed HDF5 demonstrations
+tools/extract_frames.py                    Extracts inspection frames from demonstrations
+tools/delete_demos.py                      Removes bad demonstrations from HDF5 files
+tools/generate_pruned_init.py              Generates pruned LIBERO initial states
+policies/                                  Contains scripted robot policies
 ```
 
 ---
@@ -125,7 +134,46 @@ These BDDL files define the LIBERO tasks that the scripted policies will solve.
 
 ---
 
-## 2. Add Scripted Policies
+## 2. Capture Relative Transform Matrices
+
+Some scripted policies require manually defined grasping or placement transforms.
+
+Use:
+
+```bash
+python tools/capture_relative_transform.py \
+  --bddl-file input_bddl/task.bddl
+```
+
+This opens the LIBERO task with keyboard control. The robot can be moved manually to a desired grasp or placement pose. When the pose is correct, press ENTER in the terminal.
+
+The script then asks for:
+
+```text
+CHILD body name
+PARENT body name
+```
+
+Example:
+
+```text
+CHILD body name: robot0_right_hand
+PARENT body name: moka_pot_1_main
+```
+
+It prints a validated relative 4x4 transformation matrix:
+
+```text
+T_relative = inverse(T_parent) @ T_child
+```
+
+The matrix can then be copied into a scripted policy as a grasping or placement transform.
+
+This tool was used to manually find relative grasp and placement matrices before creating scripted policies.
+
+---
+
+## 3. Add Scripted Policies
 
 Each scripted policy should go inside the `policies/` folder.
 
@@ -168,7 +216,7 @@ get_matrix(...)
 
 ---
 
-## 3. Test a Policy and Record a Video
+## 4. Test a Policy and Record a Video
 
 Before collecting demonstrations, test the policy visually.
 
@@ -189,7 +237,7 @@ This is useful for checking whether the robot is actually completing the task be
 
 ---
 
-## 4. Collect Raw Demonstrations
+## 5. Collect Raw Demonstrations
 
 Use `run_collection.py` to collect successful demonstrations.
 
@@ -232,7 +280,7 @@ Failed demonstrations are ignored. Only successful demonstrations are written in
 
 ---
 
-## 5. Raw HDF5 Layout
+## 6. Raw HDF5 Layout
 
 The raw demonstration files produced by `run_collection.py` usually have this structure:
 
@@ -264,7 +312,7 @@ gripper_state   Gripper state
 
 ---
 
-## 6. Restructure Raw Demonstrations
+## 7. Restructure Raw Demonstrations
 
 After collecting raw demonstrations, restructure them into a trainer-ready format.
 
@@ -290,7 +338,7 @@ processed_demos/
 
 ---
 
-## 7. Processed HDF5 Layout
+## 8. Processed HDF5 Layout
 
 The processed HDF5 files are structured like this:
 
@@ -319,7 +367,7 @@ This script does **not** directly convert the data to RLDS. It creates an interm
 
 ---
 
-## 8. Check Raw Demonstrations
+## 9. Check Raw Demonstrations
 
 To create replay videos from a raw HDF5 file, use:
 
@@ -344,7 +392,7 @@ This is useful for quickly checking whether the collected raw demos look correct
 
 ---
 
-## 9. Check Processed Demonstrations
+## 10. Check Processed Demonstrations
 
 To create a replay video from a processed HDF5 file, use:
 
@@ -376,7 +424,7 @@ videos/regenerated_replay.mp4
 
 ---
 
-## 10. Extract Frames for Inspection
+## 11. Extract Frames for Inspection
 
 To inspect demonstrations quickly, extract frames from each demo.
 
@@ -417,7 +465,7 @@ This is useful for checking whether each demo ends in the correct final state.
 
 ---
 
-## 11. Delete Bad Demonstrations
+## 12. Delete Bad Demonstrations
 
 If some demonstrations are bad, they can be removed from the HDF5 file.
 
@@ -451,7 +499,7 @@ Note: deleting demos from an HDF5 file unlinks them from the file structure, but
 
 ---
 
-## 12. Generate Pruned Initial States
+## 13. Generate Pruned Initial States
 
 For custom LIBERO benchmark tasks, pruned initial states can be generated with:
 
@@ -483,39 +531,43 @@ These initial states help LIBERO reset tasks from valid starting states.
 A typical workflow is:
 
 ```bash
-# 1. Test the policy visually
+# 1. Capture grasp/place matrices if needed
+python tools/capture_relative_transform.py \
+  --bddl-file input_bddl/task.bddl
+
+# 2. Test the policy visually
 python tools/test_and_record_policy.py \
   --bddl-file input_bddl/task.bddl \
   --policy libero_10.turn_on_stove_put_moka_pot \
   --output videos/test_result.mp4
 
-# 2. Collect raw demonstrations
+# 3. Collect raw demonstrations
 python run_collection.py \
   --bddl-file input_bddl/task.bddl \
   --policy libero_10.turn_on_stove_put_moka_pot \
   --num-demos 10
 
-# 3. Restructure raw demonstrations
+# 4. Restructure raw demonstrations
 python restructure_dataset.py \
   --raw-dir raw_demos \
   --target-dir processed_demos
 
-# 4. Check raw demonstration videos
+# 5. Check raw demonstration videos
 python tools/check_raw.py \
   --file raw_demos/your_demo_file.hdf5
 
-# 5. Check processed demonstration video
+# 6. Check processed demonstration video
 python tools/check_regenerated.py \
   --file processed_demos/your_demo_file.hdf5 \
   --demo demo_0
 
-# 6. Extract last frames for quick inspection
+# 7. Extract last frames for quick inspection
 python tools/extract_frames.py \
   --file processed_demos/your_demo_file.hdf5 \
   --layout processed \
   --frame -1
 
-# 7. Delete bad demos if needed
+# 8. Delete bad demos if needed
 python tools/delete_demos.py \
   --file processed_demos/your_demo_file.hdf5 \
   --demos demo_0 demo_5 \
